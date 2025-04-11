@@ -38,6 +38,7 @@ interface DbToolParameter {
 interface RelayToolDefinition {
   id: string;
   name: string;
+  slug: string;
   description: string | null;
   parameters: DbToolParameter[];
   // We don't need steps/execution details in the relay
@@ -51,36 +52,28 @@ interface RelayServerDefinition {
 }
 
 // Define a local type for the content items the relay *actually* produces
+// Add index signature to satisfy SDK's expected handler return type
 interface RelayTextContentItem {
+  [key: string]: any; // Index signature
   type: "text";
   text: string;
 }
 
 // --- Helper function to forward tool calls ---
-// Update signature: parameters first, add context for the tool name
+// Update signature: parameters first, add serverId and toolSlug
 async function forwardToolCall(
-  parameters: Record<string, any>, // Parameters come FIRST from SDK
-  toolNameContext: string // Pass the tool name via closure
-): Promise<{ content: RelayTextContentItem[]; isError: boolean }> {
-  // 1. Parse the tool name passed via context
-  const parts = toolNameContext.split("_"); // Use toolNameContext
-  if (parts.length < 2) {
-    const errorContentItem: RelayTextContentItem = {
-      type: "text",
-      text: "Internal relay error: Invalid tool name format.",
-    };
-    return { content: [errorContentItem], isError: true };
-  }
-  const serverId = parts[0];
-  const toolName = parts.slice(1).join("_");
-
-  // 2. Construct the dynamic execution URL (using serverId, toolName)
-  const executeUrl = `${CENTRAL_SERVER_BASE_URL}/api/mcp/servers/${serverId}/tools/${toolName}/execute`;
+  parameters: Record<string, any>,
+  serverId: string, // Pass serverId directly
+  toolSlug: string // Pass toolSlug directly
+  // Ensure the return type matches the complex type expected by the SDK handler
+): Promise<{ content: RelayTextContentItem[]; isError?: boolean }> {
+  // 1. Construct the dynamic execution URL (using serverId, toolSlug)
+  const executeUrl = `${CENTRAL_SERVER_BASE_URL}/api/mcp/servers/${serverId}/tools/${toolSlug}/execute`;
 
   console.error(
-    `Relay: Forwarding ${toolNameContext} to ${executeUrl}` // Log context name
+    `Relay: Forwarding call for tool slug '${toolSlug}' on server ${serverId} to ${executeUrl}`
   );
-  console.error(`Relay: Forwarding parameters:`, parameters); // Log received parameters
+  console.error(`Relay: Forwarding parameters:`, parameters);
 
   try {
     // 3. Make the POST request (pass received parameters)
@@ -97,7 +90,7 @@ async function forwardToolCall(
     );
 
     console.error(
-      `Relay: Received response from central server for ${toolNameContext}: Status=${response.status}, Data=`,
+      `Relay: Received response from central server for slug '${toolSlug}': Status=${response.status}, Data=`,
       response.data
     );
 
@@ -127,16 +120,16 @@ async function forwardToolCall(
     }
   } catch (error: any) {
     console.error(
-      `Relay: Error forwarding ${toolNameContext} to ${executeUrl}:`, // Use context name in log
+      `Relay: Error forwarding call for slug '${toolSlug}' on server ${serverId} to ${executeUrl}:`,
       error.message
     );
-    let errorMessage = `Error executing tool '${toolNameContext}'.`; // Use context name
+    let errorMessage = `Error executing tool '${toolSlug}'.`; // Use slug in error
     let detailText = "Relay failed to communicate with the execution server.";
 
     if (axios.isAxiosError(error)) {
       if (error.response) {
         // Extract error details from the server's response if available
-        errorMessage = `Error executing tool '${toolNameContext}' (Status: ${error.response.status}).`;
+        errorMessage = `Error executing tool '${toolSlug}' (Status: ${error.response.status}).`; // Use slug
         detailText = `Server Error: ${
           error.response.data?.error ||
           error.response.data?.details ||
@@ -209,28 +202,28 @@ async function main() {
 
     // 3. Dynamically register tools from ALL fetched servers
     for (const serverDef of serverDefinitions) {
-      const serverAlias = serverDef.id; // Use server ID as a unique alias
+      const serverId = serverDef.id; // Use actual server ID
       console.error(
-        `Relay: Processing server "${serverDef.name}" (Alias: ${serverAlias})`
+        `Relay: Processing server "${serverDef.name}" (ID: ${serverId})` // Use ID in log
       );
       for (const toolDef of serverDef.tools) {
-        // Sanitize server ID and tool name to fit MCP SDK requirements
-        // Replace invalid chars with _, ensure length <= 64
+        // Sanitize server ID and tool name for the *registered* name
         const sanitize = (name: string): string =>
           name.replace(/[^a-zA-Z0-9_-]/g, "_").substring(0, 64);
 
-        const sanitizedServerId = sanitize(serverAlias);
+        const sanitizedServerId = sanitize(serverId);
         const sanitizedToolName = sanitize(toolDef.name);
+        const toolSlugToForward = toolDef.slug; // <-- Get the actual slug to use for forwarding
 
         // Ensure names aren't empty after sanitization (edge case)
         if (!sanitizedServerId || !sanitizedToolName) {
           console.warn(
-            `Skipping tool registration due to empty sanitized name for server ${serverAlias}, tool ${toolDef.name}`
+            `Skipping tool registration due to empty sanitized name for server ${serverId}, tool ${toolDef.name}`
           );
           continue;
         }
 
-        // Construct the final name, ensuring it also fits the length limit
+        // Construct the final name that the MCP client will see
         const finalRegisteredName =
           `${sanitizedServerId}_${sanitizedToolName}`.substring(0, 64);
 
@@ -273,21 +266,22 @@ async function main() {
           });
         }
 
-        console.error(
-          ` --> Registering: ${finalRegisteredName} (Original: ${serverAlias}_${toolDef.name})`
-        );
-
-        // Use a closure to capture finalRegisteredName
+        // Define the handler, capturing necessary context (serverId and slug)
         const handler = async (params: Record<string, any>) => {
-          // Call the actual forwarding function, passing the name and params
-          return forwardToolCall(params, finalRegisteredName);
+          // Pass parameters, serverId, and the *actual slug* to forwardToolCall
+          return await forwardToolCall(params, serverId, toolSlugToForward);
         };
 
+        console.error(
+          `Relay: Registering tool "${finalRegisteredName}" (Slug: ${toolSlugToForward}) for server ${serverId}`
+        );
+
+        // Correctly use the .tool() method with positional arguments
         serverInstance.tool(
-          finalRegisteredName,
-          toolDef.description || "No description provided.",
-          parameters,
-          handler as any // Register the closure handler (keep 'as any' for safety)
+          finalRegisteredName, // Use the combined name for registration
+          toolDef.description || "", // Pass description or empty string
+          parameters, // Pass the Zod parameters schema
+          handler // Pass the handler which captures slug and serverId
         );
       }
     }
