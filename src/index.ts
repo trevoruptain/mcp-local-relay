@@ -11,6 +11,21 @@ import { z, ZodTypeAny } from "zod";
 const envPath = path.resolve(__dirname, "../.env");
 dotenv.config({ path: envPath });
 
+// --- IMPORTANT STDIO TRANSPORT NOTE ---
+// This relay uses StdioServerTransport by default. This means it communicates
+// with the client (e.g., Claude Desktop, Inspector) via standard input and
+// standard output (stdin/stdout).
+//
+// !!! DO NOT ADD `console.log` or `console.error` statements that write !!!
+// !!! to STDOUT during the normal execution flow (initialization,        !!!
+// !!! request handling). Doing so will corrupt the JSON-RPC message stream !!!
+// !!! expected by the client, causing JSON parsing errors like          !!!
+// !!! "Unexpected token ... is not valid JSON".                      !!!
+//
+// Use `console.error` only for *fatal* errors within catch blocks that lead
+// to `process.exit(1)`.
+// ----------------------------------------
+
 // --- IMPORTANT RUNTIME NOTE ---
 // If you encounter "Maximum call stack size exceeded" errors, especially when
 // reading large resources (like images), you may need to increase Node.js's
@@ -37,8 +52,8 @@ if (!apiKey) {
 const CENTRAL_SERVER_BASE_URL =
   process.env.MCP_SERVER_URL || "http://localhost:3002";
 
-// Point to the correct relay-specific server definitions endpoint
-const CENTRAL_SERVER_DISCOVERY_URL = `${CENTRAL_SERVER_BASE_URL}/api/mcp/relay/servers`;
+// Point to the correct relay-specific server definitions endpoint under /mcp
+const CENTRAL_SERVER_DISCOVERY_URL = `${CENTRAL_SERVER_BASE_URL}/mcp/relay/servers`;
 
 // Configuration file path
 const configPath = path.resolve(__dirname, "../mcpconfig.json");
@@ -48,7 +63,7 @@ interface RelayConfig {
   targetServerId?: string;
 }
 
-// Matches the structure returned by /api/mcp/servers
+// Matches the structure returned by /mcp/servers
 interface DbToolParameter {
   // Simplified, server handles full validation
   name: string;
@@ -74,26 +89,17 @@ interface RelayServerDefinition {
 }
 
 // --- Helper function to forward tool calls ---
-// Update signature: parameters first, add serverId and toolSlug
 async function forwardToolCall(
   parameters: Record<string, any>,
-  serverId: string, // Pass serverId directly
-  toolSlug: string // Pass toolSlug directly
-  // Ensure the return type matches the complex type expected by the SDK handler
+  serverId: string,
+  toolSlug: string
 ): Promise<{ content: any[]; isError?: boolean }> {
-  // 1. Construct the dynamic execution URL (using serverId, toolSlug)
-  const executeUrl = `${CENTRAL_SERVER_BASE_URL}/api/mcp/servers/${serverId}/tools/${toolSlug}/execute`;
-
-  console.error(
-    `Relay: Forwarding call for tool slug '${toolSlug}' on server ${serverId} to ${executeUrl}`
-  );
-  console.error(`Relay: Forwarding parameters:`, parameters);
+  const executeUrl = `${CENTRAL_SERVER_BASE_URL}/mcp/servers/${serverId}/tools/${toolSlug}/execute`;
 
   try {
-    // 3. Make the POST request (pass received parameters)
     const response = await axios.post<{ result: string; isError: boolean }>(
       executeUrl,
-      parameters, // Use received parameters
+      parameters,
       {
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -103,12 +109,6 @@ async function forwardToolCall(
       }
     );
 
-    console.error(
-      `Relay: Received response from central server for slug '${toolSlug}': Status=${response.status}, Data=`,
-      response.data
-    );
-
-    // 4. Format the response (using response.data)
     if (response.data && typeof response.data.result === "string") {
       const contentItem: any = {
         type: "text",
@@ -120,8 +120,7 @@ async function forwardToolCall(
       };
     } else {
       console.error(
-        "Relay: Invalid response format from central server execution endpoint:",
-        response.data
+        "Relay: Invalid response format from central server execution endpoint:"
       );
       const errorContentItem: any = {
         type: "text",
@@ -137,13 +136,12 @@ async function forwardToolCall(
       `Relay: Error forwarding call for slug '${toolSlug}' on server ${serverId} to ${executeUrl}:`,
       error.message
     );
-    let errorMessage = `Error executing tool '${toolSlug}'.`; // Use slug in error
+    let errorMessage = `Error executing tool '${toolSlug}'.`;
     let detailText = "Relay failed to communicate with the execution server.";
 
     if (axios.isAxiosError(error)) {
       if (error.response) {
-        // Extract error details from the server's response if available
-        errorMessage = `Error executing tool '${toolSlug}' (Status: ${error.response.status}).`; // Use slug
+        errorMessage = `Error executing tool '${toolSlug}' (Status: ${error.response.status}).`;
         detailText = `Server Error: ${
           error.response.data?.error ||
           error.response.data?.details ||
@@ -156,11 +154,9 @@ async function forwardToolCall(
         detailText = `Axios error: ${error.message}`;
       }
     } else {
-      // General error
       detailText = error.message;
     }
 
-    // Return error in MCP SDK format using ContentItem
     const errorContentItem: any = {
       type: "text",
       text: `${errorMessage} ${detailText}`.substring(0, 1000),
@@ -178,8 +174,8 @@ async function main() {
   const relayServerName = "MCP Kit Relay";
   let targetServerId: string | undefined = undefined;
   let targetServerName: string | undefined = undefined;
-  let targetServerResources: Resource[] = []; // Store fetched resources
-  let serverDefinition: RelayServerDefinition | null = null; // Store fetched server def
+  let targetServerResources: Resource[] = [];
+  let serverDefinition: RelayServerDefinition | null = null;
 
   try {
     // --- Read Configuration ---
@@ -189,31 +185,18 @@ async function main() {
         const config: RelayConfig = JSON.parse(configContent);
         targetServerId = config.targetServerId;
         if (targetServerId === "YOUR_SERVER_ID_HERE") {
-          // console.warn(
-          //   `Relay: Found default placeholder in ${configPath}. Please replace "YOUR_SERVER_ID_HERE" with an actual Server ID.`
-          // );
           targetServerId = undefined;
-        } else if (targetServerId) {
-          // console.error(
-          //   `Relay: Loaded target server ID "${targetServerId}" from ${configPath}`
-          // );
         }
-      } else {
-        // console.warn(
-        //   `Relay: Configuration file not found at ${configPath}. Will load all servers.`
-        // );
       }
     } catch (error: any) {
-      console.error(
-        `Relay: Error reading or parsing ${configPath}: ${error.message}. Will load all servers.`
-      );
+      console.error(`Relay: Error reading/parsing ${configPath}:`, error);
       targetServerId = undefined;
     }
     // --- End Configuration Reading ---
 
     // --- Fetch Definition AND Resources for Target Server ---
     if (targetServerId) {
-      const definitionsUrl = `${CENTRAL_SERVER_BASE_URL}/api/mcp/relay/servers?serverId=${targetServerId}`;
+      const definitionsUrl = `${CENTRAL_SERVER_BASE_URL}/mcp/relay/servers?serverId=${targetServerId}`;
       try {
         const definitionsResponse = await axios.get<RelayServerDefinition[]>(
           definitionsUrl,
@@ -229,9 +212,6 @@ async function main() {
           serverDefinition = serverDefs[0];
           targetServerName = serverDefinition.name;
         } else {
-          // console.warn(
-          //   `Relay: Target server ID "${targetServerId}" not found via ${definitionsUrl}. Relay may not function correctly.`
-          // );
           targetServerId = undefined;
         }
       } catch (error: any) {
@@ -245,38 +225,24 @@ async function main() {
       if (targetServerId) {
         // Check again in case it was cleared on error
         const resourcesListUrl = `${CENTRAL_SERVER_BASE_URL}/mcp/resources/list?serverId=${targetServerId}`;
-        // console.log(
-        //   `Relay: Fetching initial resource list from: ${resourcesListUrl}`
-        // );
         try {
           const response = await axios.get<{ resources: Resource[] }>(
             resourcesListUrl,
             { headers: { Authorization: `Bearer ${apiKey}` } }
           );
           targetServerResources = response.data?.resources || [];
-          // console.log(
-          //   `Relay: Fetched ${targetServerResources.length} resources for static registration.`
-          // );
         } catch (error: any) {
           console.error(
             `Relay: Failed to fetch initial resource list from ${resourcesListUrl}: ${error.message}`
           );
-          // Continue without resources if list fetch fails?
         }
       }
-    } else {
-      // console.warn(
-      //   `Relay: No targetServerId configured in ${configPath}. Tools will not be relayed.`
-      // );
     }
 
     // --- Create McpServer instance ---
     const serverDisplayName = targetServerId
       ? targetServerName || `Relay for ${targetServerId.substring(0, 8)}...`
       : relayServerName;
-    // console.error(
-    //   `Relay: Creating McpServer instance with name: "${serverDisplayName}"`
-    // );
     serverInstance = new McpServer({
       name: serverDisplayName,
       version: "1.0.0",
@@ -294,10 +260,6 @@ async function main() {
     if (!serverInstance) {
       throw new Error("Failed to create McpServer instance.");
     }
-    // console.log("Relay: Adding generic error listener to SDK instance.");
-    (serverInstance as any).onError = (error: any) => {
-      console.error("Relay: SDK internal error caught: ", error);
-    };
 
     // --- Define Factory for Read Handler ---
     const createReadHandler = (resourceUriRegistered: string) => {
@@ -306,7 +268,6 @@ async function main() {
         _params: any
       ): Promise<{ contents: any[] }> => {
         const requestedUri = uriFromSdk.href;
-        // console.log(`Relay: Read handler called. SDK URI: ${requestedUri}`);
         if (!targetServerId) {
           throw new Error("Relay not configured...");
         }
@@ -314,7 +275,6 @@ async function main() {
         const readUrl = `${CENTRAL_SERVER_BASE_URL}/mcp/resources/read?uri=${encodeURIComponent(
           requestedUri
         )}`;
-        // console.log(`Relay: Proxying read for ${requestedUri} to: ${readUrl}`);
         try {
           const response = await axios.get<{ contents: any[] }>(readUrl, {
             headers: {
@@ -325,9 +285,8 @@ async function main() {
             maxBodyLength: Infinity,
             maxContentLength: Infinity,
           });
-          // Directly return the received structure
-          // console.log(`Relay: Returning result object to SDK for ${requestedUri}...`);
-          return { contents: response.data?.contents || [] };
+          const result = { contents: response.data?.contents || [] };
+          return result;
         } catch (error: any) {
           console.error(
             `Relay: Error proxying read for ${requestedUri} to ${readUrl}: ${error.message}`
@@ -344,15 +303,11 @@ async function main() {
             );
           }
         }
-        // Unreachable code below, errors are thrown or result is returned
       };
     };
 
     // --- Dynamically Register Tools ---
     if (serverDefinition?.tools && serverDefinition.tools.length > 0) {
-      // console.log(
-      //   `Relay: Registering ${serverDefinition.tools.length} tools for server ${targetServerId}...`
-      // );
       for (const toolDef of serverDefinition.tools) {
         const sanitize = (name: string): string =>
           name.replace(/[^a-zA-Z0-9_-]/g, "_").substring(0, 64);
@@ -360,9 +315,6 @@ async function main() {
         const toolSlugToForward = toolDef.slug;
 
         if (!finalRegisteredName) {
-          // console.warn(
-          //   `Skipping tool registration due to empty sanitized name for tool ${toolDef.name}`
-          // );
           continue;
         }
 
@@ -401,9 +353,6 @@ async function main() {
           );
         };
 
-        // console.log(
-        //   `Relay: Registering tool '${finalRegisteredName}' (forwards to slug '${toolSlugToForward}' on server ${targetServerId})`
-        // );
         serverInstance.tool(
           finalRegisteredName,
           toolDef.description || "",
@@ -411,52 +360,27 @@ async function main() {
           handler
         );
       }
-    } else {
-      // console.log(
-      //   `Relay: No tools to register for server ${
-      //     targetServerId || "(none specified)"
-      //   }.`
-      // );
     }
 
     // --- Register Static Resources ---
-    // console.log("Relay: Attempting to register static resources...");
     try {
-      // Register each fetched resource individually using the correct factory
       if (targetServerResources.length > 0) {
-        // console.log(
-        //   `Relay: Registering ${targetServerResources.length} static resources...`
-        // );
         for (const resource of targetServerResources) {
-          // console.log(
-          //   `Relay: Registering static resource: Name=${resource.name}, URI=${resource.uri}`
-          // );
-          // Use the factory to create a specific read handler for this URI
           serverInstance.resource(
             resource.name,
             resource.uri,
             createReadHandler(resource.uri)
           );
         }
-        // console.log(`Relay: Finished registering static resources.`);
-      } else {
-        // console.log(
-        //   "Relay: Skipping static resource registration as none were fetched."
-        // );
       }
     } catch (e) {
       console.error("Relay: Error registering static resources:", e);
     }
 
     // --- Start Server ---
-    // console.log(
-    //   "Relay: Initialization complete. Starting StdioServerTransport..."
-    // );
     const transport = new StdioServerTransport();
     await serverInstance.connect(transport);
-    // console.log(`Relay: ${serverDisplayName} connected via Stdio.`);
   } catch (error: any) {
-    // Catch errors during initialization or runtime
     console.error("Relay: Entered CATCH block in main(). Error:", error);
     let userFriendlyMessage = "Fatal error initializing MCP Local Relay:";
 
@@ -481,21 +405,18 @@ async function main() {
     } else {
       userFriendlyMessage += ` ${error.message}`;
     }
-    console.error(userFriendlyMessage); // Log the tailored message
-    // console.error(errorMessage, error); // Log the original error object too if needed for debugging
+    console.error(userFriendlyMessage);
     process.exit(1);
   }
 }
 
 main().catch((error) => {
-  // Keep final fatal error log
   if (
     !(
       error instanceof RangeError &&
       error.message.includes("Maximum call stack size exceeded")
     )
   ) {
-    // Avoid double-logging the stack size error if it bubbles up here
     console.error("Unexpected fatal error in Relay main():", error);
   }
   process.exit(1);
