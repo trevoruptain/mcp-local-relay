@@ -6,10 +6,12 @@
     "mcp-kit-local-relay": "dist/index.js"
   },
   "scripts": {
-    "start": "ts-node src/index.ts",
-    "build": "tsc",
+    "start": "node --stack-size=32768 dist/index.js",
+    "build": "tsc -p tsconfig.json && tsc-alias -p tsconfig.json",
     "serve": "node dist/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "inspect": "npm run build && npx @modelcontextprotocol/inspector node dist/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "nodemon --watch src --exec \"node --stack-size=32768 -r ts-node/register -r tsconfig-paths/register src/index.ts\""
   },
   "keywords": [],
   "author": "",
@@ -26,6 +28,8 @@
     "@types/node": "^22.14.0",
     "nodemon": "^3.1.9",
     "ts-node": "^10.9.2",
+    "tsc-alias": "^1.8.10",
+    "tsconfig-paths": "^4.2.0",
     "typescript": "^5.8.3"
   }
 }
