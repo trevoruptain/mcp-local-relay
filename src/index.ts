@@ -53,7 +53,7 @@ const CENTRAL_SERVER_BASE_URL =
   process.env.MCP_SERVER_URL || "http://localhost:3002";
 
 // Point to the correct relay-specific server definitions endpoint under /mcp
-const CENTRAL_SERVER_DISCOVERY_URL = `${CENTRAL_SERVER_BASE_URL}/mcp/relay/servers`;
+const CENTRAL_SERVER_DISCOVERY_URL = `${CENTRAL_SERVER_BASE_URL}/mcp/servers`;
 
 // Configuration file path
 const configPath = path.resolve(__dirname, "../mcpconfig.json");
@@ -196,7 +196,7 @@ async function main() {
 
     // --- Fetch Definition AND Resources for Target Server ---
     if (targetServerId) {
-      const definitionsUrl = `${CENTRAL_SERVER_BASE_URL}/mcp/relay/servers?serverId=${targetServerId}`;
+      const definitionsUrl = `${CENTRAL_SERVER_BASE_URL}/mcp/servers?serverId=${targetServerId}`;
       try {
         const definitionsResponse = await axios.get<RelayServerDefinition[]>(
           definitionsUrl,

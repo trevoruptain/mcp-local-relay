@@ -11,7 +11,7 @@ This command-line tool acts as a bridge, allowing MCP clients (like Claude Deskt
 1.  **Configuration Reading**: Reads `mcpconfig.json` for `targetServerId`.
 2.  **Initialization**: If `targetServerId` is found:
     - Reads `MCPKIT_API_KEY` from `.env`.
-    - Fetches server definition (name, tools) for the target server from `/mcp/relay/servers?serverId=<targetId>`.
+    - Fetches server definition (name, tools) for the target server from `/mcp/servers?serverId=<targetId>`.
     - Fetches _file_ resource list for the target server from `/mcp/resources/list?serverId=<targetId>`.
 3.  **Local Server**: Starts a local `McpServer` named after the target server.
 4.  **Tool Registration**: Registers tools for the target server locally via `serverInstance.tool()`.
@@ -40,4 +40,4 @@ This command-line tool acts as a bridge, allowing MCP clients (like Claude Deskt
 ## Connections
 
 - **Listens for**: Local MCP clients via `stdio`.
-- **Connects to**: `server` project endpoints (`/mcp/relay/servers`, `/mcp/resources/list`, `/mcp/resources/read`, `/api/mcp/servers/:id/tools/:slug/execute`).
+- **Connects to**: `server` project endpoints (`/mcp/servers`, `/mcp/resources/list`, `/mcp/resources/read`, `/api/mcp/servers/:id/tools/:slug/execute`).
