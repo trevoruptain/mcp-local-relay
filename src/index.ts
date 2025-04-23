@@ -88,6 +88,19 @@ interface RelayServerDefinition {
   tools: RelayToolDefinition[];
 }
 
+// Prompt related types
+interface PromptArgument {
+  name: string;
+  description: string | null;
+  required: boolean;
+}
+
+interface PromptDefinition {
+  name: string;
+  description: string | null;
+  arguments: PromptArgument[];
+}
+
 // --- Helper function to forward tool calls ---
 async function forwardToolCall(
   parameters: Record<string, any>,
@@ -176,6 +189,7 @@ async function main() {
   let targetServerName: string | undefined = undefined;
   let targetServerResources: Resource[] = [];
   let serverDefinition: RelayServerDefinition | null = null;
+  let serverPrompts: PromptDefinition[] = [];
 
   try {
     // --- Read Configuration ---
@@ -237,6 +251,28 @@ async function main() {
           );
         }
       }
+
+      // Fetch prompts list *if* server was found
+      if (targetServerId) {
+        const promptsListUrl = `${CENTRAL_SERVER_BASE_URL}/mcp/prompts/list?serverId=${targetServerId}`;
+        try {
+          const response = await axios.post<{ prompts: PromptDefinition[] }>(
+            promptsListUrl,
+            {},
+            {
+              headers: {
+                Authorization: `Bearer ${apiKey}`,
+                "Content-Type": "application/json",
+              },
+            }
+          );
+          serverPrompts = response.data?.prompts || [];
+        } catch (error: any) {
+          console.error(
+            `Relay: Failed to fetch prompts list from ${promptsListUrl}: ${error.message}`
+          );
+        }
+      }
     }
 
     // --- Create McpServer instance ---
@@ -253,6 +289,8 @@ async function main() {
           serverDefinition?.tools && serverDefinition.tools.length > 0
             ? {}
             : undefined,
+        // Enable prompts capability if we fetched any prompts
+        prompts: serverPrompts.length > 0 ? {} : undefined,
       },
     });
 
@@ -375,6 +413,73 @@ async function main() {
       }
     } catch (e) {
       console.error("Relay: Error registering static resources:", e);
+    }
+
+    // --- Register Prompts ---
+    if (serverPrompts.length > 0 && targetServerId) {
+      try {
+        // Register each prompt
+        for (const promptDef of serverPrompts) {
+          // Convert the prompt arguments to Zod schema
+          const promptParameters: Record<string, ZodTypeAny> = {};
+
+          if (promptDef.arguments && Array.isArray(promptDef.arguments)) {
+            promptDef.arguments.forEach((arg) => {
+              // Default to string type for all arguments since we don't have type information
+              let schema = z.string();
+
+              if (arg.description) {
+                schema = schema.describe(arg.description);
+              }
+
+              // Add the parameter with optional flag if needed
+              promptParameters[arg.name] = arg.required
+                ? schema
+                : schema.optional();
+            });
+          }
+
+          // Create a handler for the prompt
+          const promptHandler = async (args: any) => {
+            try {
+              // Make a POST request to the real server to get the prompt data
+              const response = await fetch(
+                `${CENTRAL_SERVER_BASE_URL}/mcp/prompts/${promptDef.name}`,
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${apiKey}`,
+                  },
+                  body: JSON.stringify(args),
+                }
+              );
+
+              if (!response.ok) {
+                throw new Error(
+                  `Failed to fetch prompt: ${response.statusText}`
+                );
+              }
+
+              const promptData = await response.json();
+              return promptData;
+            } catch (error) {
+              console.error(`Error fetching prompt ${promptDef.name}:`, error);
+              throw error;
+            }
+          };
+
+          // Register the prompt with the server
+          serverInstance.prompt(
+            promptDef.name,
+            promptDef.description || "",
+            promptParameters,
+            promptHandler
+          );
+        }
+      } catch (error: any) {
+        console.error(`Relay: Error registering prompts:`, error.message);
+      }
     }
 
     // --- Start Server ---
