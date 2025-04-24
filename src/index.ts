@@ -7,6 +7,188 @@ import fs from "fs";
 import path from "path";
 import { z, ZodTypeAny } from "zod";
 
+// Set up file logging
+const logFilePath = path.resolve(__dirname, "../local-relay-debug.log");
+
+// Create a simple logger that writes to file
+function log(...args: any[]) {
+  const timestamp = new Date().toISOString();
+  const message = args
+    .map((arg) =>
+      typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg)
+    )
+    .join(" ");
+
+  const logMessage = `${timestamp} - ${message}\n`;
+
+  // Append to log file - use sync to ensure it writes before any crashes
+  try {
+    fs.appendFileSync(logFilePath, logMessage);
+  } catch (error) {
+    // If we can't write to the log file, try console as a fallback
+    // but only for severe errors to avoid corrupting the JSON-RPC stream
+    console.error(`[ERROR WRITING TO LOG FILE] ${error}`);
+  }
+}
+
+// Initialize the log file
+try {
+  log("---------- LOCAL RELAY LOG STARTED ----------");
+  log(`Log file: ${logFilePath}`);
+  log(`Node.js version: ${process.version}`);
+  log(`Process ID: ${process.pid}`);
+  log(`Current directory: ${process.cwd()}`);
+} catch (error) {
+  console.error("Failed to initialize log file:", error);
+}
+
+// Configure global error handling to catch and log unhandled errors
+process.on("uncaughtException", (error) => {
+  log("UNCAUGHT EXCEPTION (local-relay):", error);
+  // Don't exit the process - we want to keep running despite errors
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  log("UNHANDLED REJECTION (local-relay):", reason);
+  // Don't exit the process - we want to keep running despite errors
+});
+
+// Add global fetch polyfill with better error handling
+try {
+  // Only add fetch if it doesn't already exist
+  if (typeof global.fetch !== "function") {
+    log("fetch not available, implementing with axios");
+
+    // Create polyfill for fetch using axios
+    global.fetch = async (url: string | URL | Request, options: any = {}) => {
+      const requestUrl =
+        url instanceof URL || typeof url === "string"
+          ? url.toString()
+          : url.url;
+      log(`[fetch] Fetching URL: ${requestUrl}`);
+
+      const requestInit =
+        url instanceof Request
+          ? { method: url.method, headers: url.headers }
+          : options;
+
+      try {
+        const axiosOptions: any = {
+          method: requestInit.method || "GET",
+          url: requestUrl,
+          responseType: "arraybuffer",
+        };
+
+        if (requestInit.headers) {
+          axiosOptions.headers = {};
+          if (requestInit.headers instanceof Headers) {
+            requestInit.headers.forEach((value: string, key: string) => {
+              axiosOptions.headers[key] = value;
+            });
+          } else {
+            axiosOptions.headers = requestInit.headers;
+          }
+        }
+
+        if (requestInit.body) {
+          axiosOptions.data = requestInit.body;
+        }
+
+        const response = await axios(axiosOptions);
+
+        const responseHeaders = new Headers();
+        Object.entries(response.headers).forEach(
+          ([key, value]: [string, any]) => {
+            responseHeaders.set(key, String(value));
+          }
+        );
+
+        return new Response(response.data, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: responseHeaders,
+        });
+      } catch (error) {
+        log(`[fetch] Error fetching ${requestUrl}:`, error);
+        throw error;
+      }
+    };
+
+    // Create Headers class to simulate browser Headers API
+    class HeadersPolyfill {
+      private headers: Record<string, string> = {};
+
+      constructor(init?: Record<string, string>) {
+        if (init) {
+          Object.entries(init).forEach(([key, value]: [string, string]) => {
+            this.set(key, value);
+          });
+        }
+      }
+
+      append(name: string, value: string): void {
+        const existingValue = this.get(name);
+        this.set(name, existingValue ? `${existingValue}, ${value}` : value);
+      }
+
+      delete(name: string): void {
+        delete this.headers[name.toLowerCase()];
+      }
+
+      get(name: string): string | null {
+        return this.headers[name.toLowerCase()] || null;
+      }
+
+      has(name: string): boolean {
+        return name.toLowerCase() in this.headers;
+      }
+
+      set(name: string, value: string): void {
+        this.headers[name.toLowerCase()] = value;
+      }
+
+      forEach(
+        callback: (value: string, key: string, parent: HeadersPolyfill) => void
+      ): void {
+        Object.entries(this.headers).forEach(
+          ([key, value]: [string, string]) => {
+            callback(value, key, this);
+          }
+        );
+      }
+    }
+
+    // @ts-ignore - Ignore type errors for our simple polyfill implementation
+    global.Headers = HeadersPolyfill as any;
+
+    // Create Request class with all required static properties
+    const RequestClass = class Request {
+      url: string;
+      method: string;
+      headers: any;
+
+      constructor(input: string, init: any = {}) {
+        this.url = input;
+        this.method = init.method || "GET";
+        this.headers = new global.Headers(init.headers);
+      }
+    };
+
+    // Add required static properties
+    RequestClass.prototype = RequestClass.prototype || {};
+
+    // @ts-ignore - Ignore type errors for our simple polyfill implementation
+    global.Request = RequestClass as any;
+
+    log("Added axios-based fetch polyfill");
+  } else {
+    log("Global fetch already exists, skipping polyfill");
+  }
+} catch (error) {
+  log("Failed to create axios-based fetch polyfill:", error);
+  // Continue without fetch - better to try to run than crash immediately
+}
+
 // Load environment variables from the project root
 const envPath = path.resolve(__dirname, "../.env");
 dotenv.config({ path: envPath });
@@ -183,6 +365,8 @@ async function forwardToolCall(
 
 // --- Main function to initialize and start the relay server ---
 async function main() {
+  log("Starting MCP local-relay main function...");
+
   let serverInstance: McpServer | null = null;
   const relayServerName = "MCP Kit Relay";
   let targetServerId: string | undefined = undefined;
@@ -193,6 +377,7 @@ async function main() {
 
   try {
     // --- Read Configuration ---
+    log("Reading configuration...");
     try {
       if (fs.existsSync(configPath)) {
         const configContent = fs.readFileSync(configPath, "utf-8");
@@ -201,15 +386,22 @@ async function main() {
         if (targetServerId === "YOUR_SERVER_ID_HERE") {
           targetServerId = undefined;
         }
+        log(`Loaded config with serverId: ${targetServerId || "undefined"}`);
+      } else {
+        log(`Config file not found at: ${configPath}`);
       }
     } catch (error: any) {
-      console.error(`Relay: Error reading/parsing ${configPath}:`, error);
+      log(
+        `Relay: Error reading/parsing ${configPath}:`,
+        error.message || error
+      );
       targetServerId = undefined;
     }
     // --- End Configuration Reading ---
 
     // --- Fetch Definition AND Resources for Target Server ---
     if (targetServerId) {
+      log(`Fetching server definition for server ID: ${targetServerId}`);
       const definitionsUrl = `${CENTRAL_SERVER_BASE_URL}/mcp/servers?serverId=${targetServerId}`;
       try {
         const definitionsResponse = await axios.get<RelayServerDefinition[]>(
@@ -225,12 +417,16 @@ async function main() {
         if (serverDefs.length > 0) {
           serverDefinition = serverDefs[0];
           targetServerName = serverDefinition.name;
+          log(`Found server: ${targetServerName}`);
         } else {
+          log("No server definitions found");
           targetServerId = undefined;
         }
       } catch (error: any) {
-        console.error(
-          `Relay: Failed to fetch server definition from ${definitionsUrl}. Error: ${error.message}. Relay will likely fail.`
+        log(
+          `Relay: Failed to fetch server definition from ${definitionsUrl}. Error: ${
+            error.message || error
+          }. Relay will likely fail.`
         );
         targetServerId = undefined;
       }
@@ -279,25 +475,36 @@ async function main() {
     const serverDisplayName = targetServerId
       ? targetServerName || `Relay for ${targetServerId.substring(0, 8)}...`
       : relayServerName;
-    serverInstance = new McpServer({
-      name: serverDisplayName,
-      version: "1.0.0",
-      capabilities: {
-        // Enable resources capability if we fetched any resources to register
-        resources: targetServerResources.length > 0 ? {} : undefined,
-        tools:
-          serverDefinition?.tools && serverDefinition.tools.length > 0
-            ? {}
-            : undefined,
-        // Enable prompts capability if we fetched any prompts
-        prompts: serverPrompts.length > 0 ? {} : undefined,
-      },
-    });
+
+    log(`Creating MCP server with name: ${serverDisplayName}`);
+    try {
+      serverInstance = new McpServer({
+        name: serverDisplayName,
+        version: "1.0.0",
+        capabilities: {
+          // Enable resources capability if we fetched any resources to register
+          resources: targetServerResources.length > 0 ? {} : undefined,
+          tools:
+            serverDefinition?.tools && serverDefinition.tools.length > 0
+              ? {}
+              : undefined,
+          // Enable prompts capability if we fetched any prompts
+          prompts: serverPrompts.length > 0 ? {} : undefined,
+        },
+      });
+      log("MCP server instance created successfully");
+    } catch (error: any) {
+      log(`ERROR creating MCP server: ${error.message || error}`);
+      throw error;
+    }
 
     // --- Add SDK Error Listener (BEFORE handlers) ---
     if (!serverInstance) {
+      log("Server instance is null after creation");
       throw new Error("Failed to create McpServer instance.");
     }
+
+    log("Setting up server capabilities");
 
     // --- Define Factory for Read Handler ---
     const createReadHandler = (resourceUriRegistered: string) => {
@@ -326,11 +533,11 @@ async function main() {
           const result = { contents: response.data?.contents || [] };
           return result;
         } catch (error: any) {
-          console.error(
+          log(
             `Relay: Error proxying read for ${requestedUri} to ${readUrl}: ${error.message}`
           );
           if (axios.isAxiosError(error) && error.response) {
-            console.error(
+            log(
               `Relay: Upstream error: Status=${error.response.status}, Data=`,
               error.response.data
             );
@@ -403,23 +610,31 @@ async function main() {
     // --- Register Static Resources ---
     try {
       if (targetServerResources.length > 0) {
+        log(`Registering ${targetServerResources.length} resources...`);
         for (const resource of targetServerResources) {
+          log(`  - Registering resource: ${resource.name}`);
           serverInstance.resource(
             resource.name,
             resource.uri,
             createReadHandler(resource.uri)
           );
         }
+        log("Resources registered successfully");
+      } else {
+        log("No resources to register");
       }
-    } catch (e) {
-      console.error("Relay: Error registering static resources:", e);
+    } catch (e: any) {
+      log("Relay: Error registering static resources:", e.message || e);
     }
 
     // --- Register Prompts ---
     if (serverPrompts.length > 0 && targetServerId) {
       try {
+        log(`Registering ${serverPrompts.length} prompts...`);
         // Register each prompt
         for (const promptDef of serverPrompts) {
+          log(`  - Registering prompt: ${promptDef.name}`);
+
           // Convert the prompt arguments to Zod schema
           const promptParameters: Record<string, ZodTypeAny> = {};
 
@@ -440,31 +655,155 @@ async function main() {
           }
 
           // Create a handler for the prompt
-          const promptHandler = async (args: any) => {
+          const promptHandler = async (args: any, extra: any = {}) => {
             try {
-              // Make a POST request to the real server to get the prompt data
-              const response = await fetch(
-                `${CENTRAL_SERVER_BASE_URL}/mcp/prompts/${promptDef.name}`,
-                {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${apiKey}`,
-                  },
-                  body: JSON.stringify(args),
-                }
+              // Enhanced debugging for arguments
+              log(`DEBUG: Starting prompt handler for "${promptDef.name}"`);
+              log(`DEBUG: Raw arguments: ${JSON.stringify(args)}`);
+              log(`DEBUG: Raw extra: ${JSON.stringify(extra)}`);
+              log(`DEBUG: Argument type: ${typeof args}`);
+              log(
+                `DEBUG: Arguments keys: ${Object.keys(args || {}).join(", ")}`
               );
 
-              if (!response.ok) {
+              // Check if there's a 'params' object in the args (Claude might nest them)
+              if (args && args.params && typeof args.params === "object") {
+                log(`DEBUG: Found nested params object, extracting...`);
+                const extractedArgs = args.params.arguments || {};
+                log(
+                  `DEBUG: Extracted nested arguments: ${JSON.stringify(
+                    extractedArgs
+                  )}`
+                );
+                args = extractedArgs;
+              }
+
+              // If args is a string, try to parse it to see if it's JSON
+              if (typeof args === "string") {
+                log(`DEBUG: Argument is a string, attempting to parse`);
+                try {
+                  const parsedArgs = JSON.parse(args);
+                  log(`DEBUG: Parsed string args:`, JSON.stringify(parsedArgs));
+                  // If parsing succeeds, use the parsed object
+                  args = parsedArgs;
+                } catch (e) {
+                  log(`DEBUG: String arg is not valid JSON:`, args);
+                }
+              }
+
+              // Make a POST request to the real server to get the prompt data
+              let response;
+              try {
+                // Make sure we're passing the arguments correctly
+                const requestData = {
+                  params: {
+                    name: promptDef.name,
+                    arguments: args || {},
+                  },
+                };
+
+                log(
+                  `DEBUG: Sending request to server:`,
+                  JSON.stringify(requestData)
+                );
+
+                response = await axios.post(
+                  `${CENTRAL_SERVER_BASE_URL}/mcp/prompts/get?serverId=${targetServerId}`,
+                  requestData,
+                  {
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Bearer ${apiKey}`,
+                    },
+                  }
+                );
+              } catch (requestError: any) {
+                log(
+                  `ERROR in prompt request for "${promptDef.name}":`,
+                  requestError.message || "No error message"
+                );
+                throw requestError;
+              }
+
+              log(
+                `DEBUG: Prompt handler response received for ${promptDef.name}`
+              );
+
+              // Check if response has the expected structure
+              if (!response || !response.data) {
+                log(
+                  `ERROR: Invalid response from server for prompt "${promptDef.name}"`
+                );
                 throw new Error(
-                  `Failed to fetch prompt: ${response.statusText}`
+                  `Invalid response from server for prompt "${promptDef.name}"`
                 );
               }
 
-              const promptData = await response.json();
-              return promptData;
-            } catch (error) {
-              console.error(`Error fetching prompt ${promptDef.name}:`, error);
+              // Debug log the entire response
+              log(`Prompt response data for ${promptDef.name}:`, response.data);
+
+              // CRITICAL: The MCP SDK expects the response in a specific format
+              // Check and normalize to proper structure
+              const originalData = response.data;
+              let resultMessages = [];
+              let resultDescription: string | undefined =
+                promptDef.description || undefined;
+
+              // Case 1: Server already returns the correct format (description + messages)
+              if (
+                originalData.messages &&
+                Array.isArray(originalData.messages)
+              ) {
+                log(
+                  `Server returned properly structured response with messages array`
+                );
+                resultMessages = originalData.messages;
+                if (originalData.description) {
+                  resultDescription = originalData.description;
+                }
+              }
+              // Case 2: Server returns just an array of messages
+              else if (Array.isArray(originalData)) {
+                log(
+                  `Server returned raw message array, reformatting to MCP spec`
+                );
+                resultMessages = originalData;
+              }
+              // Case 3: Unknown format - try to extract messages if possible
+              else {
+                log(
+                  `WARNING: Unexpected response format, attempting to normalize`
+                );
+
+                // Try to extract messages if available, or use empty array
+                resultMessages = Array.isArray(originalData.messages)
+                  ? originalData.messages
+                  : Array.isArray(originalData)
+                  ? originalData
+                  : [];
+
+                if (originalData.description) {
+                  resultDescription = originalData.description;
+                }
+              }
+
+              // Create the final object structure expected by the MCP spec
+              const result = {
+                description: resultDescription,
+                messages: resultMessages,
+              };
+
+              log(`Formatted response for prompt ${promptDef.name}:`, result);
+              return result;
+            } catch (error: any) {
+              // Log the error to stderr (this will be visible in Claude logs)
+              log(
+                `Error in prompt handler for "${promptDef.name}":`,
+                error.message || "No error message",
+                error.stack || "No stack trace"
+              );
+
+              // Rethrow to be handled by MCP SDK
               throw error;
             }
           };
@@ -483,10 +822,20 @@ async function main() {
     }
 
     // --- Start Server ---
-    const transport = new StdioServerTransport();
-    await serverInstance.connect(transport);
+    log("Creating stdio transport...");
+    try {
+      const transport = new StdioServerTransport();
+
+      log("Transport created, connecting server...");
+      await serverInstance.connect(transport);
+      log("Server connected successfully!");
+    } catch (error: any) {
+      log("Error connecting server to transport:", error.message || error);
+      throw error;
+    }
   } catch (error: any) {
-    console.error("Relay: Entered CATCH block in main(). Error:", error);
+    log("Relay: Entered CATCH block in main(). Error:", error.message || error);
+    log("Stack trace:", error.stack || "No stack trace available");
     let userFriendlyMessage = "Fatal error initializing MCP Local Relay:";
 
     // Check for specific stack overflow error
@@ -510,6 +859,9 @@ async function main() {
     } else {
       userFriendlyMessage += ` ${error.message}`;
     }
+    log(userFriendlyMessage);
+
+    // For fatal errors we'll also write to console.error for visibility
     console.error(userFriendlyMessage);
     process.exit(1);
   }
@@ -522,6 +874,7 @@ main().catch((error) => {
       error.message.includes("Maximum call stack size exceeded")
     )
   ) {
+    log("Unexpected fatal error in Relay main():", error);
     console.error("Unexpected fatal error in Relay main():", error);
   }
   process.exit(1);
