@@ -1,43 +1,139 @@
 # MCP Kit Local Relay
 
-## Purpose
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-This command-line tool acts as a bridge, allowing MCP clients (like Claude Desktop or Inspector) using `stdio` transport to interact with a _specific_ centrally hosted MCP server managed by the `mcp-kit-server` project.
+This command-line tool acts as a bridge, allowing local MCP clients that use standard input/output (`stdio`), like **Claude Desktop**, to interact with a _specific_ remote MCP Server you've configured using the [MCP Kit Web App](https://app.mcpkit.ai).
 
-**It acts as a proxy for a SINGLE target server defined in `mcpconfig.json`.**
+It proxies requests to **one** target server, making its tools and resources available locally.
 
-## How it Works
+## Getting Started (Claude Desktop Example)
 
-1.  **Configuration Reading**: Reads `mcpconfig.json` for `targetServerId`.
-2.  **Initialization**: If `targetServerId` is found:
-    - Reads `MCPKIT_API_KEY` from `.env`.
-    - Fetches server definition (name, tools) for the target server from `/mcp/servers?serverId=<targetId>`.
-    - Fetches _file_ resource list for the target server from `/mcp/resources/list?serverId=<targetId>`.
-3.  **Local Server**: Starts a local `McpServer` named after the target server.
-4.  **Tool Registration**: Registers tools for the target server locally via `serverInstance.tool()`.
-5.  **Resource Registration**: Registers _file_ resources for the target server locally via `serverInstance.resource()`. The read handler proxies to the backend.
-6.  **Request Proxying**:
-    - `tools/list`, `resources/list`: Handled locally by the SDK based on registered items.
-    - `tools/call`: Proxied to the backend `/api/mcp/servers/:id/tools/:slug/execute`.
-    - `resources/read`: Proxied to the backend `/mcp/resources/read?uri=...`.
+Follow these steps to connect Claude Desktop to your remote MCP Server using this relay:
 
-## Technology Stack
+**Prerequisites:**
 
-- Node.js, TypeScript
-- `@modelcontextprotocol/sdk`
-- Axios, `dotenv`
+- Node.js (v18 or later recommended)
+- npm (usually included with Node.js)
+- Git
 
-## Setup and Running
+**Steps:**
 
-1.  Install: `npm install`
-2.  `.env`: Requires `MCPKIT_API_KEY`, `MCP_SERVER_URL`.
-3.  `mcpconfig.json`: Requires `targetServerId` pointing to a valid server ID from the backend.
-4.  Build: `npm run build`
-5.  Run: `npm start`
+1.  **Clone the Relay:**
+    If you haven't already, clone this repository and navigate into the directory:
 
-6.  **Stack Size**: If `Maximum call stack size exceeded` occurs (large image resources), run with increased stack: `node --stack-size=32768 dist/index.js` (The `npm start` script includes this).
+    ```bash
+    git clone <repository_url> # Replace with the actual repo URL if needed
+    cd local-relay
+    ```
 
-## Connections
+2.  **Install Dependencies:**
 
-- **Listens for**: Local MCP clients via `stdio`.
-- **Connects to**: `server` project endpoints (`/mcp/servers`, `/mcp/resources/list`, `/mcp/resources/read`, `/api/mcp/servers/:id/tools/:slug/execute`).
+    ```bash
+    npm install
+    ```
+
+3.  **Configure the Relay:**
+    Create two configuration files directly inside the `local-relay` folder:
+
+    - **`.env` file:** Create this file and add your MCP Kit API Key and the URL of your central MCP server.
+
+      ```dotenv
+      # Get your API Key from the MCP Kit Web App (app.mcpkit.ai) -> API Keys
+      MCPKIT_API_KEY=your_api_key_here
+
+      # URL of your running MCP Kit server project (defaults to localhost:3002 if omitted)
+      # MCP_SERVER_URL=http://localhost:3002
+      ```
+
+      _(Replace `your_api_key_here` with your actual key)_
+
+    - **`mcpconfig.json` file:** Create this file and specify the unique ID of the _single_ remote MCP Server you want this relay to connect to.
+      ```json
+      {
+        "targetServerId": "your_target_server_id_here"
+      }
+      ```
+      _(Replace `your_target_server_id_here` with the Server ID found on the MCP Kit Web App -> Servers page)_
+
+4.  **Build the Relay:**
+    Compile the code:
+
+    ```bash
+    npm run build
+    ```
+
+    This creates a `dist` directory with the necessary JavaScript files. The main script is `dist/index.js`.
+
+5.  **Configure Claude Desktop:**
+    You need to tell Claude Desktop how to run the relay script.
+
+    - Open Claude Desktop settings (Menu -> Settings... -> Developer -> Edit Config).
+    - Edit the `claude_desktop_config.json` file.
+    - Add an entry under `mcpServers`. Use `node` as the `command` and provide the **full, absolute path** to the `dist/index.js` file you just built in the `args`.
+
+    ```json
+    {
+      "mcpServers": {
+        "my_mcp_server": {
+          // Choose a name for Claude Desktop to display
+          "command": "node",
+          "args": [
+            // Replace this with the *absolute* path!
+            "/Users/yourname/path/to/local-relay/dist/index.js"
+          ]
+        }
+      }
+    }
+    ```
+
+    - **Important:** Replace the example path with the actual absolute path on your system.
+    - For detailed instructions on editing the Claude config, see the [Local Relay Documentation](https://docs.mcpkit.ai/essentials/local-relay). _(Note: Update this link if the final URL is different)_
+
+6.  **Restart Claude Desktop:**
+    Quit and restart the Claude Desktop application completely.
+
+7.  **Verify:**
+    Click the hammer icon (<img src="https://mintlify.s3.us-west-1.amazonaws.com/mcp/images/claude-desktop-mcp-hammer-icon.svg" style={{display: 'inline', margin: 0, height: '1.3em'}} />) in Claude Desktop's chat input. You should see the tools from your target server listed under the name you chose (e.g., `my_mcp_server`).
+
+You can now use your remote MCP server's tools directly within Claude Desktop!
+
+## Running the Relay Manually
+
+You can also run the relay directly from your terminal (e.g., for testing or use with other `stdio` clients):
+
+```bash
+npm start
+```
+
+This command executes `node --stack-size=32768 dist/index.js`. The relay will start listening for MCP commands on standard input. The `--stack-size` flag is included to prevent potential "Maximum call stack size exceeded" errors when dealing with large resources (like images).
+
+## Troubleshooting
+
+- **Claude Desktop Issues:**
+  - Hammer icon missing or tools not listed?
+  - Double-check the **absolute path** to `dist/index.js` in `claude_desktop_config.json`.
+  - Verify `npm run build` completed without errors.
+  - Ensure `.env` and `mcpconfig.json` exist in the `local-relay` directory and contain the correct API key and Server ID.
+  - Check Claude Desktop's own logs (see [official MCP docs](https://modelcontextprotocol.io/quickstart/user) for locations).
+- **Relay Errors:**
+  - Check the `local-relay-debug.log` file created in the `local-relay` directory for detailed error messages from the relay itself.
+  - Ensure your `MCP_SERVER_URL` in `.env` (or the default `http://localhost:3002`) points to a running instance of the `mcp-kit-server`.
+  - Confirm your `MCPKIT_API_KEY` is valid.
+
+## Development
+
+To run the relay in development mode with automatic restarts on code changes:
+
+```bash
+npm run dev
+```
+
+This uses `nodemon` and `ts-node`.
+
+## Contributing
+
+Contributions are welcome! Please see `CONTRIBUTING.md` for guidelines.
+
+## License
+
+This project is licensed under the MIT License - see the `LICENSE` file for details.

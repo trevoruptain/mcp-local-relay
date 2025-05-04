@@ -234,9 +234,6 @@ if (!apiKey) {
 const CENTRAL_SERVER_BASE_URL =
   process.env.MCP_SERVER_URL || "http://localhost:3002";
 
-// Point to the correct relay-specific server definitions endpoint under /mcp
-const CENTRAL_SERVER_DISCOVERY_URL = `${CENTRAL_SERVER_BASE_URL}/mcp/servers`;
-
 // Configuration file path
 const configPath = path.resolve(__dirname, "../mcpconfig.json");
 

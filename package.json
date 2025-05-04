@@ -1,6 +1,6 @@
 {
   "name": "mcp-kit-local-relay",
-  "version": "1.0.0",
+  "version": "0.0.0",
   "main": "dist/index.js",
   "bin": {
     "mcp-kit-local-relay": "dist/index.js"
@@ -13,10 +13,17 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon --watch src --exec \"node --stack-size=32768 -r ts-node/register -r tsconfig-paths/register src/index.ts\""
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "relay",
+    "proxy",
+    "claude-desktop",
+    "stdio"
+  ],
+  "author": "Trevor Uptain <trevor@mcpkit.ai>",
+  "license": "MIT",
+  "description": "Command-line relay to connect stdio MCP clients (e.g., Claude Desktop) to a remote mcp-kit-server.",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.8.0",
     "axios": "^1.8.4",
