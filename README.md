@@ -2,9 +2,9 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-This command-line tool acts as a bridge, allowing local MCP clients that use standard input/output (`stdio`), like **Claude Desktop**, to interact with a _specific_ remote MCP Server you've configured using the [MCP Kit Web App](https://app.mcpkit.ai).
+This command-line tool acts as a bridge, allowing local MCP clients that use standard input/output (`stdio`), like **Claude Desktop**, to interact with remote MCP Servers you've configured using the [MCP Kit Web App](https://app.mcpkit.ai).
 
-It proxies requests to **one** target server, making its tools and resources available locally.
+It proxies requests to **one** target server at a time, making its tools and resources available locally.
 
 ## Getting Started (Claude Desktop Example)
 
@@ -35,7 +35,7 @@ Follow these steps to connect Claude Desktop to your remote MCP Server using thi
 3.  **Configure the Relay:**
     Create two configuration files directly inside the `local-relay` folder:
 
-    - **`.env` file:** Create this file and add your MCP Kit API Key and the URL of your central MCP server.
+    - **`.env` file:** Create this file and add your MCP Kit API Key and the URL of your central MCP server. You can generate an API key [here](https://app.mcpkit.ai/api-keys).
 
       ```dotenv
       # Get your API Key from the MCP Kit Web App (app.mcpkit.ai) -> API Keys
@@ -93,7 +93,7 @@ Follow these steps to connect Claude Desktop to your remote MCP Server using thi
     Quit and restart the Claude Desktop application completely.
 
 7.  **Verify:**
-    Click the hammer icon (<img src="https://mintlify.s3.us-west-1.amazonaws.com/mcp/images/claude-desktop-mcp-hammer-icon.svg" style={{display: 'inline', margin: 0, height: '1.3em'}} />) in Claude Desktop's chat input. You should see the tools from your target server listed under the name you chose (e.g., `my_mcp_server`).
+    Click the hammer icon ![MCP Hammer Icon](https://mintlify.s3.us-west-1.amazonaws.com/mcp/images/claude-desktop-mcp-hammer-icon.svg) in Claude Desktop's chat input. You should see the tools from your target server listed under the name you chose (e.g., `my_mcp_server`).
 
 You can now use your remote MCP server's tools directly within Claude Desktop!
 
