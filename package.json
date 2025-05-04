@@ -1,6 +1,6 @@
 {
   "name": "mcp-kit-local-relay",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "main": "dist/index.js",
   "bin": {
     "mcp-kit-local-relay": "dist/index.js"
