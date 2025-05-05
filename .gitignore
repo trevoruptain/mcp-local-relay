@@ -1,2 +1,8 @@
 # Generated files
-local-relay-debug.log 
+local-relay-debug.log
+
+# Environment variables
+.env
+
+# Local relay configuration
+mcpconfig.json
