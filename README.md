@@ -13,7 +13,7 @@ Follow these steps to connect Claude Desktop to your remote MCP Server using thi
 **Prerequisites:**
 
 - Node.js (v18 or later recommended)
-- npm (usually included with Node.js)
+- Node.js
 - Git
 
 **Steps:**
@@ -22,7 +22,7 @@ Follow these steps to connect Claude Desktop to your remote MCP Server using thi
     If you haven't already, clone this repository and navigate into the directory:
 
     ```bash
-    git clone <repository_url> # Replace with the actual repo URL if needed
+    git clone https://github.com/trevoruptain/mcp-local-relay
     cd local-relay
     ```
 
@@ -35,14 +35,11 @@ Follow these steps to connect Claude Desktop to your remote MCP Server using thi
 3.  **Configure the Relay:**
     Create two configuration files directly inside the `local-relay` folder:
 
-    - **`.env` file:** Create this file and add your MCP Kit API Key and the URL of your central MCP server. You can generate an API key [here](https://app.mcpkit.ai/api-keys).
+    - **`.env` file:** Create this file and add your MCP Kit API Key. You can generate an API key [here](https://app.mcpkit.ai/api-keys).
 
       ```dotenv
       # Get your API Key from the MCP Kit Web App (app.mcpkit.ai) -> API Keys
       MCPKIT_API_KEY=your_api_key_here
-
-      # URL of your running MCP Kit server project (defaults to localhost:3002 if omitted)
-      # MCP_SERVER_URL=http://localhost:3002
       ```
 
       _(Replace `your_api_key_here` with your actual key)_
